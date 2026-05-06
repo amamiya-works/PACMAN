@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JP1パラメータ・セーフガード [PACMAN]</title>
+    <!-- 
+    【CSS定義】
+    外部通信を避けるため、すべてのスタイルをここに記述。
+    3段レイアウト、カラーコーディング、および属性ルビの配置を制御します。
+    -->
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --original-bg: #e9ecef;
+            --edit-bg: #e3f2fd;
+            --status-normal: #2196f3; /* ブルー */
+            --status-safe: #4caf50;   /* グリーン */
+            --status-error: #f44336;  /* レッド */
+            --highlight: #fff59d;    /* 変更箇所の黄色 */
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            height: 100%; overflow: hidden;
+            font-family: "BIZ UDゴシック", "Meiryo", monospace;
+            background-color: var(--bg-color);
+        }
+
+        /* 3段分割レイアウトの基本構造 */
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 5px 15px; background: #333; color: white; border-radius: 5px;
+        }
+
+        .section {
+            flex: 1;
+            margin: 5px 0;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column;
+            position: relative;
+        }
+
+        .label { font-weight: bold; margin-bottom: 5px; font-size: 0.9rem; display: flex; justify-content: space-between; }
+
+        /* 上段：オリジナル */
+        #sec-original { background-color: var(--original-bg); }
+        #input-original { width: 100%; height: 60px; font-family: monospace; font-size: 1.2rem; resize: none; }
+
+        /* 中段：編集エリア */
+        #sec-edit { background-color: var(--edit-bg); }
+        #input-edit { width: 100%; height: 60px; font-family: monospace; font-size: 1.2rem; resize: none; }
+
+        /* 下段：結果エリア */
+        #sec-result { 
+            background-color: var(--status-normal); 
+            transition: background-color 0.3s;
+            color: white;
+            overflow-y: auto;
+        }
+
+        /* 属性ルビ表示用のスロット設計 */
+        .char-display {
+            display: flex; flex-wrap: wrap; gap: 4px; padding: 10px;
+            background: rgba(255,255,255,0.1); border-radius: 5px; min-height: 100px;
+        }
+        .char-slot {
+            display: flex; flex-direction: column; align-items: center;
+            width: 45px; margin-bottom: 10px;
+        }
+        .char-main {
+            font-size: 1.8rem; font-weight: bold; height: 40px; line-height: 40px;
+            background: white; color: #333; width: 100%; text-align: center; border-radius: 3px;
+            font-family: "Courier New", monospace;
+        }
+        .char-ruby {
+            font-size: 0.65rem; margin-top: 4px; font-weight: normal;
+        }
+        .changed { background-color: var(--highlight) !important; }
+
+        /* フッター・操作パネル */
+        .control-panel {
+            background: white; padding: 15px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            margin-top: 5px; color: #333;
+        }
+        .status-badge { font-weight: bold; padding: 5px 10px; border-radius: 4px; border: 1px solid #ccc; }
+        .btn {
+            padding: 15px 30px; font-size: 1.2rem; font-weight: bold; cursor: pointer;
+            border: none; border-radius: 5px; transition: 0.2s;
+        }
+        .btn-copy { background: #4caf50; color: white; flex-grow: 2; }
+        .btn-copy:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-ss { background: #607d8b; color: white; }
+        .btn-reset { background: #f44336; color: white; padding: 5px 15px; font-size: 0.8rem; }
+
+        /* ヘルプホバー */
+        .help-icon {
+            cursor: pointer; background: #666; border-radius: 50%; width: 20px; height: 20px;
+            display: inline-flex; justify-content: center; align-items: center; font-size: 12px;
+        }
+        .help-icon:hover::after {
+            content: "凡例：[半空]半角スペース [全空]全角スペース [半数]数字 [全漢]全角文字";
+            position: absolute; background: #333; color: white; padding: 10px; border-radius: 5px;
+            top: 30px; left: 0; z-index: 100; width: 300px; font-size: 0.8rem;
+        }
+
+        /* トースト通知 */
+        #toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: #333; color: white; padding: 10px 20px; border-radius: 20px;
+            display: none; z-index: 1000;
+        }
+    </style>
+    <!-- 証跡コピー用ライブラリ (html2canvas minified) をTakedaが安全にインライン化 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+<div class="container" id="app-area">
+    <!-- ヘッダー：タイトルと時計、リセット -->
+    <header>
+        <div>PACMAN <span style="font-size: 0.7rem;">JP1 Parameter Safeguard</span> <span class="help-icon">?</span></div>
+        <div id="clock">0000/00/00 00:00:00</div>
+        <button class="btn btn-reset" onclick="confirmReset()">RESET</button>
+    </header>
+
+    <!-- 上段：オリジナル入力 -->
+    <div class="section" id="sec-original">
+        <div class="label">
+            <span>【上段】 ORIGINAL (お手本)</span>
+            <span id="count-original">桁数: 0</span>
+        </div>
+        <textarea id="input-original" placeholder="ここに元のパラメータを貼り付けてください（貼り付け後ロックされます）"></textarea>
+    </div>
+
+    <!-- 中段：編集エリア -->
+    <div class="section" id="sec-edit">
+        <div class="label">
+            <span>【中段】 EDIT (編集用)</span>
+            <span id="count-edit">桁数: 0 / 変更: 0</span>
+        </div>
+        <textarea id="input-edit" placeholder="ここで手打ち修正を行ってください" disabled></textarea>
+    </div>
+
+    <!-- 下段：結果エリア -->
+    <div class="section" id="sec-result">
+        <div class="label">【下段】 RESULT (プレビュー・属性ルビ)</div>
+        <div id="char-preview" class="char-display">
+            <!-- ここに属性ルビ付きの文字が動的に生成されます -->
+        </div>
+    </div>
+
+    <!-- 判定パネルと操作ボタン -->
+    <div class="control-panel">
+        <div id="judge-status" class="status-badge">待機中</div>
+        <div id="diff-status" style="font-size: 0.8rem;"></div>
+        <button id="btn-copy" class="btn btn-copy" disabled onclick="copyToClipboard()">COPY (桁数不一致によりロック)</button>
+        <button id="btn-ss" class="btn btn-ss" onclick="takeEvidence()">証跡コピー</button>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- 
+【JavaScriptメインロジック】
+KenjiとYuiが構築したリアルタイムバリデーションと、Takedaが監査したスタンドアロン処理。
+-->
+<script>
+    const originalInput = document.getElementById('input-original');
+    const editInput = document.getElementById('input-edit');
+    const previewArea = document.getElementById('char-preview');
+    const btnCopy = document.getElementById('btn-copy');
+    const resultSec = document.getElementById('sec-result');
+    const judgeStatus = document.getElementById('judge-status');
+
+    // 時計の更新
+    function updateClock() {
+        const now = new Date();
+        const timeStr = now.getFullYear() + '/' + 
+            String(now.getMonth() + 1).padStart(2, '0') + '/' +
+            String(now.getDate()).padStart(2, '0') + ' ' +
+            String(now.getHours()).padStart(2, '0') + ':' +
+            String(now.getMinutes()).padStart(2, '0') + ':' +
+            String(now.getSeconds()).padStart(2, '0');
+        document.getElementById('clock').innerText = timeStr;
+    }
+    setInterval(updateClock, 1000);
+
+    // 文字の属性を判別するロジック (Yui担当)
+    function getCharAttribute(char) {
+        if (char === ' ') return '半空';
+        if (char === '　') return '全空';
+        if (/[0-9]/.test(char)) return '半数';
+        if (/[a-zA-Z]/.test(char)) return '半英';
+        if (/[!-~]/.test(char)) return '半記'; // 半角記号
+        return '全漢'; // その他（漢字、かな、全角記号等）
+    }
+
+    // メインのバリデーション処理 (Kenji担当)
+    function validate() {
+        const org = originalInput.value;
+        const edit = editInput.value;
+        
+        // 100文字制限の適用
+        if (edit.length > 100) {
+            editInput.value = edit.substring(0, 100);
+        }
+
+        const orgLen = org.length;
+        const editLen = edit.length;
+        
+        document.getElementById('count-original').innerText = `桁数: ${orgLen}`;
+        
+        // 変更箇所のカウント
+        let diffCount = 0;
+        previewArea.innerHTML = '';
+
+        const maxLen = Math.max(orgLen, editLen);
+        for (let i = 0; i < editLen; i++) {
+            const char = edit[i];
+            const isChanged = (i >= orgLen || char !== org[i]);
+            if (isChanged) diffCount++;
+
+            // ルビ付きスロットの作成
+            const slot = document.createElement('div');
+            slot.className = 'char-slot';
+            
+            const main = document.createElement('div');
+            main.className = 'char-main' + (isChanged ? ' changed' : '');
+            main.innerText = char === ' ' ? '' : (char === '　' ? '□' : char);
+            
+            const ruby = document.createElement('div');
+            ruby.className = 'char-ruby';
+            ruby.innerText = getCharAttribute(char);
+
+            slot.appendChild(main);
+            slot.appendChild(ruby);
+            previewArea.appendChild(slot);
+        }
+
+        document.getElementById('count-edit').innerText = `桁数: ${editLen} / 変更: ${diffCount}`;
+
+        // ポカヨケ判定：背景色とボタン制御
+        if (orgLen === 0) {
+            resultSec.style.backgroundColor = 'var(--status-normal)';
+            judgeStatus.innerText = "オリジナル入力待ち";
+            btnCopy.disabled = true;
+            btnCopy.innerText = "ORIGINALを入力してください";
+        } else if (orgLen === editLen) {
+            resultSec.style.backgroundColor = 'var(--status-safe)';
+            judgeStatus.innerText = "桁数一致 (OK)";
+            btnCopy.disabled = false;
+            btnCopy.innerText = "結果をコピーする";
+        } else {
+            resultSec.style.backgroundColor = 'var(--status-error)';
+            judgeStatus.innerText = "桁数不一致 (NG)";
+            btnCopy.disabled = true;
+            btnCopy.innerText = "桁数が違うためコピーできません";
+        }
+    }
+
+    // オリジナル入力時の処理（一度入力されたら入力を固定する）
+    originalInput.addEventListener('change', () => {
+        if (originalInput.value.length > 0) {
+            originalInput.disabled = true;
+            editInput.disabled = false;
+            editInput.value = originalInput.value; // 初期値としてコピー
+            editInput.focus();
+            validate();
+        }
+    });
+
+    editInput.addEventListener('input', validate);
+
+    // コピー機能
+    function copyToClipboard() {
+        navigator.clipboard.writeText(editInput.value).then(() => {
+            showToast("コピーしました！ (証跡を撮ってください)");
+        });
+    }
+
+    // 証跡コピー機能 (Takeda監査済み Canvas実装)
+    async function takeEvidence() {
+        const appArea = document.getElementById('app-area');
+        const canvas = await html2canvas(appArea);
+        canvas.toBlob(blob => {
+            const item = new ClipboardItem({ "image/png": blob });
+            navigator.clipboard.write([item]).then(() => {
+                showToast("画面全体を画像としてコピーしました！");
+            });
+        });
+    }
+
+    // リセット機能 (二段階ロック)
+    function confirmReset() {
+        if (confirm("現在までの作業内容をすべて消去します。よろしいですか？")) {
+            location.reload();
+        }
+    }
+
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.display = 'block';
+        setTimeout(() => { t.style.display = 'none'; }, 20000); // 20秒表示
+    }
+</script>
+
+</body>
+</html>

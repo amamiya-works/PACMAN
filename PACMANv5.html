@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JP1 Parameter Safeguard [PACMAN Final]</title>
+    <!-- 
+    【CSS定義】
+    - 縦100%のレスポンシブ設計（flexbox活用）
+    - オーナー指定のカラーパレット（ライトグレー、パステルブルー、グリーン、レッド）
+    - 各スロットのハイライト制御と中央寄せレイアウト
+    -->
+    <style>
+        :root {
+            --color-org: #e9ecef;
+            /* 上段：ライトグレー */
+            --color-edit: #bbdefb;
+            /* 中段：パステルブルー */
+            --color-safe: #a5d6a7;
+            /* 下段：パステルグリーン */
+            --color-error: #f48fb1;
+            /* 下段：パステルレッド(NG) */
+            --color-error-text: #b71c1c;
+            --bs-dark: #212529;
+            --bs-blue: #0d6efd;
+            --bs-green: #198754;
+        }
+
+        /* 画面全体の縦固定設定 */
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', "BIZ UDゴシック", sans-serif;
+            background-color: #f0f2f5;
+        }
+
+        #app-wrapper {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* ヘッダー(固定高) */
+        header {
+            flex: 0 0 50px;
+            background: var(--bs-dark);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        /* メインエリア（％による可変高） */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            gap: 8px;
+            overflow: hidden;
+            /* 内部でスクロールさせない */
+        }
+
+        /* 各セクションの高さ比率 */
+        .section-card {
+            border-radius: 8px;
+            border: 1px solid #ced4da;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- 縦の高さバランスを整える設定 --- */
+
+        #sec-org { 
+            flex: 0 0 33%;    /* 上段：お手本なので、2行が収まる最小限の高さ */
+            background-color: var(--color-org); 
+        }
+
+        #sec-edit { 
+            flex: 0 0 33%;    /* 中段：メイン作業エリア。ここを一番広く取ると作業しやすいです */
+            background-color: var(--color-edit); 
+        }
+
+        #sec-result { 
+            flex: 1;          /* 下段：残りのスペース（約40%）をすべて使ってゆったり表示 */
+            transition: background-color 0.3s ease; 
+        }
+
+        .card-header {
+            flex: 0 0 25px;
+            padding: 2px 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .card-body {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            /* 溢れた場合のみ内部スクロール */
+        }
+
+        /* 1文字スロットのグリッド */
+        .char-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            justify-content: flex-start;
+        }
+
+        .slot {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 30px;
+        }
+
+        .slot-num {
+            font-size: 0.55rem;
+            color: #6c757d;
+            margin-bottom: 1px;
+            font-family: monospace;
+        }
+
+        /* --- ボックスのサイズ計算を固定し、文字を上下左右中央に配置する --- */
+        .slot-input {
+            width: 100%; 
+            height: 38px; 
+            
+            /* 文字を完全に中央に置くための設定 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center; 
+            
+            font-size: 1.7rem; 
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+
+            /* 重要：枠線を内側に計算させる設定（これで隣とくっつかなくなります） */
+            box-sizing: border-box; 
+            border: 1px solid #adb5bd; 
+            border-radius: 2px; 
+            background: white;
+            padding: 0;
+            margin: 0;
+        }
+
+        .slot-input:focus {
+            border-color: var(--bs-blue);
+            outline: none;
+            background: #fffde7;
+        }
+
+        .slot-input.changed {
+            background-color: #ffeb3b !important;
+            /* より鮮やかな黄色 */
+            border-color: #fbc02d;
+            color: #000;
+        }
+
+        /* 全角エラー時の赤枠設定 */
+        .slot-input.is-error {
+            border: 3px solid #ff0000 !important; /* 太い赤枠 */
+            background-color: #ffebee !important; /* 薄い赤背景 */
+        }
+
+        .slot-ruby {
+            font-size: 0.55rem;
+            margin-top: 2px;
+            font-weight: bold;
+            color: #495057;
+        }
+
+        /* フッターエリア（吸い付き/スティッキー） */
+        footer {
+            flex: 0 0 auto;
+            background: white;
+            border-top: 1px solid #dee2e6;
+            padding: 10px 20px;
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 判定パネル（3点中央寄せ） */
+        .judge-panel {
+            display: flex;
+            justify-content: center;
+            gap: 60px;
+            margin-bottom: 10px;
+        }
+
+        .check-item {
+            text-align: center;
+        }
+
+        .check-label {
+            font-size: 0.7rem;
+            color: #666;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .check-value {
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .val-ok {
+            color: var(--bs-green);
+        }
+
+        .val-ng {
+            color: #dc3545;
+            font-weight: 900;
+        }
+
+        /* ボタン類 */
+        .btn-row {
+            display: flex;
+            gap: 10px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn-copy {
+            flex: 1;
+            background: var(--bs-green);
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .btn-copy:disabled {
+            background: #adb5bd;
+            cursor: not-allowed;
+        }
+
+        .btn-ss {
+            background: var(--bs-blue);
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        #toast {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            display: none;
+            z-index: 9999;
+        }
+    </style>
+    <!-- 証跡コピー用(スタンドアロン対応) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+
+<body>
+
+    <div id="app-wrapper">
+        <header>
+            <div style="font-weight: bold; font-size: 1.2rem;">PACMAN <span
+                    style="font-size: 0.7rem; font-weight: normal; opacity: 0.8;">JP1 Parameter Safeguard v4.5
+                    Final</span></div>
+            <div id="live-clock" style="font-family: monospace; font-size: 1.1rem;"></div>
+            <button class="btn" style="background: #dc3545; color: white; padding: 6px 22px; font-size: 0.7rem;"
+                onclick="app.reset()">RESET</button>
+        </header>
+
+        <div class="main-content" id="capture-area">
+            <!-- 上段：ORIGINAL -->
+            <div class="section-card" id="sec-org">
+                <div class="card-header">
+                    <span>【1】 ORIGINAL - 比較元貼り付け</span>
+                    <span id="org-len-label">0文字</span>
+                </div>
+                <div class="card-body">
+                    <input type="text" id="paste-box"
+                        style="width: 98%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"
+                        placeholder="ここへ元のパラメータを貼り付けてEnterを押してください">
+                    <div id="grid-org" class="char-grid"></div>
+                </div>
+            </div>
+
+            <!-- 中段：EDIT -->
+            <div class="section-card" id="sec-edit">
+                <div class="card-header">
+                    <span>【2】 EDIT - ダイレクト編集（1文字ずつ）</span>
+                    <span id="edit-diff-label">変更箇所: 0</span>
+                </div>
+                <div class="card-body">
+                    <div id="grid-edit" class="char-grid"></div>
+                </div>
+            </div>
+
+            <!-- 下段：RESULT -->
+            <div class="section-card" id="sec-result">
+                <div class="card-header">【3】 RESULT - 最終プレビュー</div>
+                <div class="card-body">
+                    <div id="grid-result" class="char-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- フッター：吸い付き判定パネルと操作ボタン -->
+        <footer>
+            <div class="judge-panel">
+                <div class="check-item">
+                    <span class="check-label">文字数判定</span>
+                    <span id="stat-len" class="check-value">-</span>
+                </div>
+                <div class="check-item">
+                    <span class="check-label">変更箇所数</span>
+                    <span id="stat-diff" class="check-value">-</span>
+                </div>
+                <div class="check-item">
+                    <span class="check-label">全角文字混入</span>
+                    <span id="stat-zen" class="check-value">-</span>
+                </div>
+            </div>
+            <div class="btn-row">
+                <button id="btn-copy" class="btn btn-copy" disabled onclick="app.copy()">結果をコピーする</button>
+                <button class="btn btn-ss" onclick="app.screenshot()">証跡画像コピー</button>
+            </div>
+        </footer>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        /**
+         * PACMAN v4.5 Final ロジック
+         * - ％指定の縦レイアウト
+         * - クリック時の全選択(ハイライト)
+         * - 3点中央寄せ判定パネル
+         */
+        const app = {
+            orgStr: "",
+            editArr: [],
+
+            init() {
+                this.pasteBox = document.getElementById('paste-box');
+                this.pasteBox.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') this.start();
+                });
+                setInterval(() => this.updateClock(), 1000);
+                this.updateClock();
+            },
+
+            updateClock() {
+                const now = new Date();
+                document.getElementById('live-clock').innerText = now.toLocaleString('ja-JP');
+            },
+
+            start() {
+                const val = this.pasteBox.value;
+                if (!val) return;
+                this.orgStr = val;
+                this.editArr = val.split('');
+                this.pasteBox.style.display = 'none'; // 貼り付け後は固定長モード
+                this.renderOrg();
+                this.refresh();
+            },
+
+            getCharType(c) {
+                if (c === ' ') return '半空';
+                if (c === '　') return '全空';
+                if (/[0-9]/.test(c)) return '半数';
+                if (/[a-zA-Z]/.test(c)) return '半英';
+                if (/[!-~]/.test(c)) return '半記';
+                return '全漢';
+            },
+
+            renderOrg() {
+                const container = document.getElementById('grid-org');
+                container.innerHTML = '';
+                document.getElementById('org-len-label').innerText = this.orgStr.length + '文字';
+                for (let i = 0; i < this.orgStr.length; i++) {
+                    container.appendChild(this.createSlot(this.orgStr[i], i, false));
+                }
+            },
+
+            createSlot(char, index, isEditable) {
+                const slot = document.createElement('div');
+                slot.className = 'slot';
+
+                const num = document.createElement('div');
+                num.className = 'slot-num';
+                num.innerText = index + 1;
+
+                const box = isEditable ? document.createElement('input') : document.createElement('div');
+                box.className = 'slot-input';
+
+                // 【追加：全角チェックロジック】
+                const charType = this.getCharType(char);
+                if (charType.includes('全')) {
+                    box.classList.add('is-error'); // 全角なら赤枠クラスを付与
+                }
+
+                if (isEditable) {
+                    box.value = char;
+                    if (char !== this.orgStr[index]) box.classList.add('changed');
+
+                    // 【指示採用】フォーカス時に全選択(ハイライト)
+                    box.addEventListener('focus', () => box.select());
+
+                    box.addEventListener('input', (e) => {
+                        const newVal = e.target.value.charAt(0) || ' ';
+                        this.editArr[index] = newVal;
+                        this.refresh();
+                        // オートフォーカス移動
+                        if (e.target.value.length > 0) {
+                            const nextSlot = slot.nextElementSibling;
+                            if (nextSlot) nextSlot.querySelector('input').focus();
+                        }
+                    });
+
+                    box.addEventListener('keydown', (e) => {
+                        if (e.key === 'Backspace' && box.value === '') {
+                            const prevSlot = slot.previousElementSibling;
+                            if (prevSlot) prevSlot.querySelector('input').focus();
+                        }
+                    });
+                } else {
+                    box.innerText = char === ' ' ? '' : (char === '　' ? '□' : char);
+                }
+
+                const ruby = document.createElement('div');
+                ruby.className = 'slot-ruby';
+                ruby.innerText = this.getCharType(char);
+
+                slot.appendChild(num);
+                slot.appendChild(box);
+                slot.appendChild(ruby);
+                return slot;
+            },
+
+            refresh() {
+                const gridEdit = document.getElementById('grid-edit');
+                const gridResult = document.getElementById('grid-result');
+                gridEdit.innerHTML = '';
+                gridResult.innerHTML = '';
+
+                let diffs = 0;
+                let zens = 0;
+
+                for (let i = 0; i < this.editArr.length; i++) {
+                    const char = this.editArr[i];
+                    const originalChar = this.orgStr[i];
+                    if (char !== originalChar) diffs++;
+                    if (this.getCharType(char).includes('全')) zens++;
+
+                    gridEdit.appendChild(this.createSlot(char, i, true));
+
+                    const resSlot = this.createSlot(char, i, false);
+                    const resBox = resSlot.querySelector('.slot-input');
+                    if (char !== originalChar) resBox.classList.add('changed');
+                    gridResult.appendChild(resSlot);
+                }
+
+                // ステータス更新
+                document.getElementById('edit-diff-label').innerText = `変更箇所: ${diffs}`;
+
+                const statLen = document.getElementById('stat-len');
+                const statDiff = document.getElementById('stat-diff');
+                const statZen = document.getElementById('stat-zen');
+                const resultSec = document.getElementById('sec-result');
+
+                statLen.innerHTML = `<span class="val-ok">${this.editArr.length} / ${this.orgStr.length} (一致)</span>`;
+                statDiff.innerText = `${diffs} 箇所`;
+                statZen.innerHTML = zens > 0 ? `<span class="val-ng">あり (${zens})</span>` : `<span class="val-ok">なし</span>`;
+
+                // 下段背景色の制御
+                if (zens > 0) {
+                    resultSec.style.backgroundColor = 'var(--color-error)';
+                    document.getElementById('btn-copy').disabled = true;
+                } else if (diffs > 0) {
+                    resultSec.style.backgroundColor = 'var(--color-safe)';
+                    document.getElementById('btn-copy').disabled = false;
+                } else {
+                    resultSec.style.backgroundColor = 'var(--color-edit)';
+                    document.getElementById('btn-copy').disabled = false;
+                }
+            },
+
+            copy() {
+                navigator.clipboard.writeText(this.editArr.join('')).then(() => this.toast("コピーしました！"));
+            },
+
+            async screenshot() {
+                const target = document.getElementById('app-wrapper');
+                const canvas = await html2canvas(target);
+                canvas.toBlob(blob => {
+                    const item = new ClipboardItem({ "image/png": blob });
+                    navigator.clipboard.write([item]).then(() => this.toast("証跡画像をコピーしました"));
+                });
+            },
+
+            reset() {
+                if (confirm("作業内容をすべてリセットしますか？")) location.reload();
+            },
+
+            toast(m) {
+                const t = document.getElementById('toast');
+                t.innerText = m; t.style.display = 'block';
+                setTimeout(() => t.style.display = 'none', 3000);
+            }
+        };
+
+        app.init();
+    </script>
+</body>
+
+</html>

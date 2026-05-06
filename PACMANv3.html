@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JP1 Parameter Safeguard [PACMAN v3]</title>
+    <!-- 
+    【デザイン定義】
+    全段に文字ボックスとナンバリングを表示するための精密レイアウト。
+    Bootstrapのカードデザインを継承しつつ、グリッド表示を強化。
+    -->
+    <style>
+        :root {
+            --bs-blue: #0d6efd; --bs-green: #198754; --bs-red: #dc3545;
+            --bs-yellow: #ffc107; --bs-gray: #6c757d; --bs-light: #f8f9fa;
+            --bs-body-bg: #dee2e6;
+        }
+
+        body {
+            background-color: var(--bs-body-bg);
+            font-family: 'Segoe UI', Roboto, "BIZ UDゴシック", sans-serif;
+            margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column;
+        }
+
+        /* アプリ全体のコンテナ（証跡コピーの対象） */
+        #full-app-container {
+            flex: 1; display: flex; flex-direction: column;
+            background-color: var(--bs-body-bg); padding-bottom: 10px;
+        }
+
+        header {
+            background: #212529; color: white; padding: 10px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .main-content {
+            flex: 1; display: flex; flex-direction: column;
+            padding: 10px; gap: 10px; overflow-y: auto;
+        }
+
+        .card {
+            background: white; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex; flex-direction: column; border: 1px solid #ced4da;
+        }
+
+        .card-header {
+            padding: 6px 12px; background: #f8f9fa; border-bottom: 1px solid #dee2e6;
+            font-size: 0.85rem; font-weight: bold; display: flex; justify-content: space-between;
+        }
+
+        .card-body { padding: 10px; }
+
+        /* テキスト入力エリア */
+        textarea {
+            width: 100%; border: 1px solid #ced4da; border-radius: 4px;
+            padding: 8px; font-family: monospace; font-size: 1rem; resize: none;
+            box-sizing: border-box; background: #fff;
+        }
+
+        /* 精密ボックスグリッド表示 */
+        .char-grid {
+            display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px;
+            padding: 8px; background: #f1f3f5; border-radius: 4px; min-height: 60px;
+        }
+
+        /* 一文字スロット（番号・文字・ルビ） */
+        .slot {
+            display: flex; flex-direction: column; align-items: center; width: 42px; margin-bottom: 8px;
+        }
+        .slot-num {
+            font-size: 0.6rem; color: #adb5bd; margin-bottom: 2px; font-family: monospace;
+        }
+        .slot-char {
+            width: 100%; height: 36px; line-height: 36px; text-align: center;
+            font-size: 1.4rem; font-weight: bold; border: 1px solid #dee2e6;
+            border-radius: 4px; background: white; font-family: 'Courier New', monospace;
+        }
+        .slot-ruby {
+            font-size: 0.6rem; margin-top: 3px; color: #495057; font-weight: bold;
+        }
+
+        /* 状態別カラー */
+        .bg-changed { background-color: #fff3cd !important; border-color: #ffeeba !important; color: #856404 !important; }
+        .border-safe { border-left: 8px solid var(--bs-green) !important; }
+        .border-error { border-left: 8px solid var(--bs-red) !important; }
+
+        /* フッター操作パネル */
+        .footer-panel {
+            background: white; padding: 12px 20px; border-top: 1px solid #dee2e6;
+            display: grid; grid-template-columns: 1fr 2fr 1fr; align-items: center; gap: 20px;
+        }
+
+        .btn {
+            padding: 12px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s;
+        }
+        .btn-copy { background: var(--bs-green); color: white; width: 100%; font-size: 1.2rem; }
+        .btn-copy:disabled { background: #adb5bd; cursor: not-allowed; }
+        .btn-ss { background: var(--bs-blue); color: white; }
+        .btn-reset { background: var(--bs-red); color: white; }
+
+        .status-badge { font-weight: bold; padding: 5px 10px; border-radius: 20px; text-align: center; }
+
+        #toast {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8); color: white; padding: 20px 40px; border-radius: 10px;
+            display: none; z-index: 9999; font-size: 1.2rem;
+        }
+    </style>
+    <!-- 証跡コピー用ライブラリ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+<div id="full-app-container">
+    <header>
+        <div style="font-size: 1.4rem; font-weight: bold;">PACMAN <span style="font-size: 0.8rem; font-weight: normal; opacity: 0.7;">v3.0 - High Precision Safeguard</span></div>
+        <div id="live-clock" style="font-family: monospace; font-size: 1.2rem; background: #444; padding: 2px 10px; border-radius: 4px;"></div>
+        <button class="btn btn-reset" style="padding: 4px 12px;" onclick="app.reset()">RESET</button>
+    </header>
+
+    <div class="main-content">
+        <!-- 上段：ORIGINAL -->
+        <div class="card" id="card-original">
+            <div class="card-header">
+                <span>【1】 ORIGINAL - 元パラメータ（貼り付け）</span>
+                <span id="label-org-len" class="badge">0文字</span>
+            </div>
+            <div class="card-body">
+                <textarea id="txt-org" rows="1" placeholder="ここへ元の値を貼り付けてください"></textarea>
+                <div id="grid-org" class="char-grid"></div>
+            </div>
+        </div>
+
+        <!-- 中段：EDIT -->
+        <div class="card" id="card-edit">
+            <div class="card-header">
+                <span>【2】 EDIT - 編集エリア（手打ち修正）</span>
+                <span id="label-edit-len" class="badge">0文字 / 変更: 0</span>
+            </div>
+            <div class="card-body">
+                <textarea id="txt-edit" rows="1" placeholder="修正後の値を入力してください" disabled></textarea>
+                <div id="grid-edit" class="char-grid"></div>
+            </div>
+        </div>
+
+        <!-- 下段：RESULT -->
+        <div class="card" id="card-result">
+            <div class="card-header">
+                <span>【3】 RESULT - 最終確認プレビュー</span>
+                <span style="color:var(--bs-blue); cursor:help;" title="半空:半角スペース, 全空:全角(□), 半数:数字, 半英:英字, 全漢:その他">凡例[?]</span>
+            </div>
+            <div class="card-body">
+                <div id="grid-result" class="char-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-panel">
+        <div id="status-box" class="status-badge" style="background:#eee;">待機中</div>
+        <button id="btn-copy" class="btn btn-copy" disabled onclick="app.copy()">結果をコピー</button>
+        <button class="btn btn-ss" onclick="app.screenshot()">証跡コピー(全体)</button>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+    /**
+     * PACMAN v3 ロジック
+     * すべての段において精密な一文字グリッド表示を行う。
+     */
+    const app = {
+        init() {
+            this.orgInput = document.getElementById('txt-org');
+            this.editInput = document.getElementById('txt-edit');
+            this.orgInput.addEventListener('change', () => this.lockOriginal());
+            this.editInput.addEventListener('input', () => this.refresh());
+            setInterval(() => this.updateClock(), 1000);
+            this.updateClock();
+        },
+
+        updateClock() {
+            document.getElementById('live-clock').innerText = new Date().toLocaleString('ja-JP', {
+                year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit'
+            });
+        },
+
+        lockOriginal() {
+            if (this.orgInput.value !== "") {
+                this.orgInput.disabled = true;
+                this.editInput.disabled = false;
+                this.editInput.value = this.orgInput.value;
+                this.editInput.focus();
+                this.refresh();
+            }
+        },
+
+        getCharType(c) {
+            if (c === ' ') return '半空';
+            if (c === '　') return '全空';
+            if (/[0-9]/.test(c)) return '半数';
+            if (/[a-z]/i.test(c)) return '半英';
+            if (/[!-~]/.test(c)) return '半記';
+            return '全漢';
+        },
+
+        // グリッド描画の共通関数 (Yui担当: ナンバリング追加)
+        renderGrid(container, text, originalText, isEditArea = false) {
+            container.innerHTML = '';
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                const isChanged = originalText && (i >= originalText.length || char !== originalText[i]);
+                
+                const slot = document.createElement('div');
+                slot.className = 'slot';
+                
+                // ナンバリング (オーナー要望: 1, 2, 3...)
+                const num = document.createElement('div');
+                num.className = 'slot-num';
+                num.innerText = i + 1;
+
+                const charBox = document.createElement('div');
+                charBox.className = 'slot-char' + (isChanged ? ' bg-changed' : '');
+                charBox.innerText = (char === ' ') ? '' : (char === '　' ? '□' : char);
+
+                const ruby = document.createElement('div');
+                ruby.className = 'slot-ruby';
+                ruby.innerText = this.getCharType(char);
+
+                slot.appendChild(num);
+                slot.appendChild(charBox);
+                slot.appendChild(ruby);
+                container.appendChild(slot);
+            }
+        },
+
+        refresh() {
+            const orgVal = this.orgInput.value;
+            const editVal = this.editInput.value;
+            
+            // 全段のグリッドを更新
+            this.renderGrid(document.getElementById('grid-org'), orgVal, null);
+            this.renderGrid(document.getElementById('grid-edit'), editVal, orgVal);
+            this.renderGrid(document.getElementById('grid-result'), editVal, orgVal);
+
+            // 統計更新
+            const orgLen = orgVal.length;
+            const editLen = editVal.length;
+            let diffs = 0;
+            for(let i=0; i<editLen; i++) if(i>=orgLen || editVal[i]!==orgVal[i]) diffs++;
+
+            document.getElementById('label-org-len').innerText = `${orgLen}文字`;
+            document.getElementById('label-edit-len').innerText = `${editLen} / ${orgLen}文字 (変更:${diffs})`;
+
+            const btn = document.getElementById('btn-copy');
+            const status = document.getElementById('status-box');
+            const resultCard = document.getElementById('card-result');
+
+            if (orgLen === editLen) {
+                btn.disabled = false;
+                status.innerText = "● 桁数一致 (OK)";
+                status.style.background = "var(--bs-green)";
+                status.style.color = "white";
+                resultCard.className = "card border-safe";
+            } else {
+                btn.disabled = true;
+                status.innerText = "× 桁数不一致 (NG)";
+                status.style.background = "var(--bs-red)";
+                status.style.color = "white";
+                resultCard.className = "card border-error";
+            }
+        },
+
+        copy() {
+            navigator.clipboard.writeText(this.editInput.value).then(() => this.showToast("設定値をコピーしました"));
+        },
+
+        async screenshot() {
+            // Takeda監査: キャプチャ範囲を最上位コンテナに変更
+            const target = document.getElementById('full-app-container');
+            const canvas = await html2canvas(target, { backgroundColor: "#dee2e6" });
+            canvas.toBlob(blob => {
+                const item = new ClipboardItem({ "image/png": blob });
+                navigator.clipboard.write([item]).then(() => this.showToast("証跡画像をコピーしました（時刻・全体）"));
+            });
+        },
+
+        reset() {
+            if (confirm("全ての作業内容をクリアしますか？")) location.reload();
+        },
+
+        showToast(m) {
+            const t = document.getElementById('toast');
+            t.innerText = m; t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+    };
+
+    app.init();
+</script>
+</body>
+</html>

@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PACMAN v13 — Parameter Safeguard</title>
+
+    <!-- html2canvas CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        /* ============================================================
+         * PACMAN v13 — Parameter Safeguard
+         * 設計思想：「見やすさ＝ミスを防ぐ」を最優先とした業務入力ツール
+         * - 大画面（1280px以上）前提。スクロールなしで全情報を表示。
+         * - 文字ボックスは最小30px保証（業界標準20px × 安全係数1.5）
+         * - 全角文字の混入をリアルタイムで検知し、コピーをブロック
+         *
+         * [段階ロック設計]
+         *   縦600px以上 & 横1280px以上 → ✅ 通常動作
+         *   縦500〜599px              → ⚠️ Section02非表示・編集不可
+         *   縦499px以下 or 横1279px以下 → 🔴 フルロック（赤オーバーレイ）
+         * ============================================================ */
+
+        /* --- 0. 設計変数システム ---
+         *
+         * 【見やすさ係数の設計】
+         *   BASE_MIN  : 20px  = Webアクセシビリティ標準（WCAG）の安全ライン
+         *   SCALE     : 1.5   = 業務ミス防止のための視認性係数
+         *   → 最小保証サイズ = 20px × 1.5 = 30px
+         *
+         * ここの数値を変えると全UIが連動します。
+         * ---------------------------------------------------------- */
+        :root {
+            /* [見やすさ] 文字ボックスの高さ：最小30px保証 */
+            --base-min: 20px;
+            --scale: 1.5;
+            --slot-base: clamp(
+                calc(var(--base-min) * var(--scale)),  /* 最小: 30px */
+                5.5vh,                                  /* 画面高さに連動 */
+                120px                                   /* 最大キャップ */
+            );
+
+            /* [比率] 各パーツをslot-baseからの倍率で定義（黄金比調整済み） */
+            --font-main:    calc(var(--slot-base) * 0.60);  /* ボックス内文字 */
+            --font-sub:     calc(var(--slot-base) * 0.22);  /* 番号・ルビ */
+            --font-title:   calc(var(--slot-base) * 0.25);  /* セクションタイトル */
+            --card-pad-v:   calc(var(--slot-base) * 0.40);  /* セクション上下余白 */
+            --card-pad-h:   calc(var(--slot-base) * 0.50);  /* セクション左右余白 */
+            --footer-h:     calc(var(--slot-base) * 1.60);  /* フッター高さ */
+
+            /* [カラーパレット] */
+            --color-org:    #f8fafc;
+            --color-edit:   #d5ecfb;
+            --color-safe:   #d4fed6;
+            --color-error:  #ff979e;
+            --bg-app:       #cbd5e1;
+            --bs-blue:      #3b82f6;
+            --bs-green:     #10b981;
+            --bs-red:       #f43f5e;
+            --border-light: rgba(0, 0, 0, 0.08);
+        }
+
+        /* --- 1. 基本構造 --- */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: "BIZ UDGothic", "Segoe UI", sans-serif;
+            background-color: var(--bg-app);
+        }
+
+        /* -------------------------------------------------------
+         * ロックオーバーレイ（段階ロック設計）
+         * JavaScriptで .lock-full / .lock-edit クラスを付与して制御
+         * ------------------------------------------------------- */
+
+/* フルロック：ポップレッドオーバーレイで全操作をブロック */
+#lock-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(135deg, #fda4af 0%, #fbb896 100%);
+    z-index: 9999;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    backdrop-filter: blur(2px);
+}
+#lock-overlay.active { display: flex; }
+
+#lock-overlay .lock-icon {
+    font-size: 5rem;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.2));
+    animation: bounce 1.2s ease-in-out infinite;
+}
+@keyframes bounce {
+    0%, 100% { transform: translateY(0)    scale(1); }
+    40%       { transform: translateY(-12px) scale(1.1); }
+    60%       { transform: translateY(-6px)  scale(1.05); }
+}
+
+#lock-overlay .lock-title {
+    font-size: 2rem;
+    font-weight: 900;
+    color: white;
+    letter-spacing: 0.05em;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+#lock-overlay .lock-body {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: rgba(255,255,255,0.95);
+    text-align: center;
+    line-height: 1.8;
+    background: rgba(0,0,0,0.12);
+    padding: 12px 28px;
+    border-radius: 12px;
+}
+#lock-overlay .lock-size {
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    background: rgba(0,0,0,0.12);
+    color: white;
+    padding: 8px 24px;
+    border-radius: 8px;
+    letter-spacing: 0.1em;
+    font-weight: 800;
+}
+
+        #app-wrapper {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding-bottom: 15px;
+            box-sizing: border-box;
+        }
+
+        /* --- 2. ヘッダー --- */
+        header {
+            flex: 0 0 50px;
+            background: #f8fafc;
+            color: #3a4e69;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 24px;
+            border-bottom: 1px solid var(--border-light);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            z-index: 1000;
+            position: relative;
+        }
+
+        #app-logo {
+            color: var(--bs-blue);
+            font-weight: 900;
+            font-size: 1.1rem;
+            letter-spacing: 0.05em;
+        }
+
+        #live-clock {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Cascadia Code', 'Courier New', monospace;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #334155;
+        }
+
+        /* --- 3. メインエリア --- */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 6px;
+            gap: 4px;
+            box-sizing: border-box;
+        }
+
+        .section-card {
+            flex: 1;
+            border-radius: 12px;
+            border: 1px solid var(--border-light);
+            display: flex;
+            flex-direction: row;
+            overflow: hidden;
+            background: white;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        #sec-org    { background-color: var(--color-org); }
+        #sec-edit   { background-color: var(--color-edit); }
+        #sec-result { transition: background-color 0.3s; }
+
+        /* --- 4. サイドバー --- */
+        .sidebar {
+            flex: 0 0 150px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0,0,0,0.03);
+            border-right: 1px solid var(--border-light);
+            padding: 16px 8px;
+            text-align: center;
+        }
+
+        .sidebar-title {
+            font-size: var(--font-title);
+            font-weight: 800;
+            color: #475569;
+            letter-spacing: 0.12em;
+            line-height: 1.4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .sidebar-title::before {
+            content: "SECTION " attr(data-num);
+            display: block;
+            font-size: calc(var(--font-title) * 0.7);
+            opacity: 0.5;
+            letter-spacing: 0.2em;
+            margin-bottom: 4px;
+        }
+
+        .sidebar-stats {
+            font-size: 0.85rem;
+            font-weight: 800;
+            background: #475569;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 6px;
+            min-width: 80px;
+        }
+
+        /* --- 5. 作業エリア＆グリッド --- */
+        .body-content {
+            flex: 1;
+            padding: var(--card-pad-v) var(--card-pad-h);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* 40列固定：2行で80文字対応 */
+        .char-grid {
+            display: grid;
+            grid-template-columns: repeat(40, 1fr);
+            column-gap: 4px;
+            row-gap: 2.0vh;
+            width: 100%;
+            max-width: 1750px;
+        }
+
+        .placeholder-hint {
+            position: absolute;
+            color: #cbd5e1;
+            font-size: 1.8rem;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
+        /* --- 6. スロット＆ボックス（比率完全連動） --- */
+        .slot {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+        }
+
+        .slot-num, .slot-ruby {
+            font-size: var(--font-sub);
+            font-family: monospace;
+            font-weight: 800;
+            color: #64748b;
+            white-space: nowrap;
+        }
+        .slot-num  { margin-bottom: 2px; }
+        .slot-ruby { margin-top: 3px; }
+
+        .slot-input {
+            width: 100%;
+            height: var(--slot-base);
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            line-height: 1 !important;
+            text-align: center !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            font-size: var(--font-main);
+            font-weight: bold;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background: white;
+            font-family: 'Courier New', monospace;
+            box-sizing: border-box;
+            transition: all 0.2s;
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .slot-input:focus {
+            background-color: #fdfef0;
+            border-color: var(--bs-blue);
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+        }
+        .slot-input.is-error {
+            border: calc(var(--slot-base) * 0.08) solid var(--bs-red) !important;
+        }
+        .slot-input.changed {
+            background-color: #fef08a !important;
+            border-color: #eab308;
+        }
+
+        /* --- 7. フッター --- */
+        footer {
+            flex: 0 0 var(--footer-h);
+            background: #f1f5f9;
+            border-top: 1px solid var(--border-light);
+            display: flex;
+            flex-direction: row;
+            padding: 10px 20px;
+            gap: 15px;
+            box-sizing: border-box;
+        }
+
+        .footer-left, .footer-right {
+            flex: 1;
+            display: flex;
+            align-items: stretch;
+            gap: 12px;
+        }
+
+        .status-card {
+            flex: 1;
+            background: white;
+            border-radius: 12px;
+            padding: 5px 15px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            border: 1px solid var(--border-light);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .card-label {
+            font-size: 0.7rem;
+            font-weight: 800;
+            color: #94a3b8;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+        .card-value {
+            font-family: "Bahnschrift", "Courier New", sans-serif;
+            font-size: calc(var(--footer-h) * 0.4);
+            font-weight: 700;
+            line-height: 1;
+            color: #1e293b;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+        .unit {
+            font-size: 0.4em;
+            margin-left: 4px;
+            font-weight: 800;
+            color: #64748b;
+            vertical-align: baseline;
+        }
+        .status-text {
+            font-size: calc(var(--footer-h) * 0.3);
+            font-weight: 800;
+            vertical-align: middle;
+        }
+
+        .btn-modern {
+            border-radius: 10px;
+            border: none;
+            color: white;
+            font-weight: 800;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-modern:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn-modern:active:not(:disabled) { transform: translateY(0); }
+
+        .btn-copy { flex: 2; background: var(--bs-green); font-size: calc(var(--footer-h) * 0.25); }
+        .btn-copy:disabled { background: #cbd5e1; cursor: not-allowed; filter: none; transform: none; }
+        .btn-ss   { flex: 1; background: var(--bs-blue); font-size: 1rem; }
+
+        /* --- 8. トースト通知 --- */
+        #toast {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(15,23,42,0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 12px;
+            display: none;
+            z-index: 10002;
+            font-size: 1.5rem;
+            font-weight: bold;
+            backdrop-filter: blur(4px);
+        }
+
+        .text-safe  { color: var(--bs-green); }
+        .text-error { color: var(--bs-red); }
+    </style>
+</head>
+
+<body>
+    <!-- ロックオーバーレイ（段階ロック設計） -->
+    <div id="lock-overlay">
+        <div class="lock-icon">🔒</div>
+        <div class="lock-title">操作がロックされています</div>
+        <div class="lock-body" id="lock-message">
+            画面を拡大してください
+        </div>
+        <div class="lock-size" id="lock-size-display">-- × --</div>
+    </div>
+
+    <div id="app-wrapper">
+        <header>
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+                <div id="app-logo">PACMAN</div>
+                <span style="font-size: 0.75rem; font-weight: 600; color: #64748b;">
+                    v13 — Parameter Safeguard
+                </span>
+            </div>
+            <div id="live-clock"></div>
+            <button class="btn-modern"
+                    style="background:#f1f5f9; color:#f43f5e; border:1px solid #fecaca; height:32px; padding:0 16px; font-size:0.75rem; box-shadow:none;"
+                    onclick="app.reset()">
+                RESET
+            </button>
+        </header>
+
+        <div class="main-content" id="capture-area">
+            <!-- Section 01: 元パラメータ -->
+            <div class="section-card" id="sec-org">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="01">元パラメータ</div>
+                    <div id="org-len-label" class="sidebar-stats">READY</div>
+                </div>
+                <div class="body-content">
+                    <button id="btn-initial-paste"
+                            class="btn-modern"
+                            style="background:var(--bs-blue); padding:15px 40px; font-size:1.5rem; z-index:10;"
+                            onclick="app.pasteFromClip()">
+                        ① パラメータを貼り付ける
+                    </button>
+                    <div id="grid-org" class="char-grid"></div>
+                </div>
+            </div>
+
+            <!-- Section 02: 編集ブロック -->
+            <div class="section-card" id="sec-edit">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="02">編集ブロック</div>
+                    <div id="edit-diff-label" class="sidebar-stats">待機中</div>
+                </div>
+                <div class="body-content">
+                    <div id="edit-hint" class="placeholder-hint">② 編集作業エリア</div>
+                    <div id="grid-edit" class="char-grid"></div>
+                </div>
+            </div>
+
+            <!-- Section 03: 編集後確認 -->
+            <div class="section-card" id="sec-result">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="03">編集後確認</div>
+                    <div id="res-badge" class="sidebar-stats" style="background:var(--bs-blue);">READY</div>
+                </div>
+                <div class="body-content">
+                    <div id="result-hint" class="placeholder-hint">③ 最終確認</div>
+                    <div id="grid-result" class="char-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <div class="footer-left">
+                <div class="status-card">
+                    <span class="card-label">文字数</span>
+                    <span id="stat-len" class="card-value">-</span>
+                </div>
+                <div class="status-card">
+                    <span class="card-label">変更箇所</span>
+                    <span id="stat-diff" class="card-value">-</span>
+                </div>
+                <div class="status-card">
+                    <span class="card-label">全角有無</span>
+                    <span id="stat-zen" class="card-value">-</span>
+                </div>
+            </div>
+            <div class="footer-right">
+                <button id="btn-copy" class="btn-modern btn-copy" disabled onclick="app.copy()">
+                    ④ 結果をコピーする
+                </button>
+                <button class="btn-modern btn-ss" onclick="app.screenshot()">
+                    証跡画像コピー
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        /**
+         * PACMAN v13 — アプリケーションロジック
+         *
+         * 設計思想：
+         *  - パラメータの1文字単位での視認・編集・照合を支援する
+         *  - 全角文字の混入を即時検知し、コピーを物理ブロックすることでミスを防ぐ
+         *  - 証跡画像をクリップボードに保存し、作業記録として残せる
+         *
+         * [段階ロック設計]
+         *  LOCK_W  : 横幅の最小値（これを下回るとフルロック）
+         *  LOCK_H  : 縦幅の最小値（これを下回るとフルロック）
+         *  WARN_H  : Section02を隠す縦幅の閾値
+         */
+        const app = {
+            /** 元パラメータ文字列（変更不可） */
+            orgStr: "",
+
+            /** 編集中の文字配列 */
+            editArr: [],
+
+            /** 最大文字数（安全のため100文字に制限） */
+            MAX_LENGTH: 100,
+
+            /** ロック閾値：横幅の最小値（px） */
+            LOCK_W: 1280,
+
+            /** ロック閾値：縦幅の最小値（px） */
+            LOCK_H: 600,
+
+            /** Section02非表示の縦幅閾値（px） */
+            WARN_H: 500,
+
+            // -------------------------------------------------------
+            // 初期化・時計
+            // -------------------------------------------------------
+
+            init() {
+                setInterval(() => this.tick(), 1000);
+                this.tick();
+
+                // ウィンドウリサイズを監視してロック状態を更新
+                window.addEventListener('resize', () => this.checkLock());
+                this.checkLock(); // 初回チェック
+            },
+
+            tick() {
+                const now = new Date();
+                // 業務慣習：深夜0時〜7時59分は「前日の業務時間」として表示
+                let displayDate = new Date(now);
+                let h = now.getHours();
+                if (h < 8) {
+                    h += 24;
+                    displayDate.setDate(now.getDate() - 1);
+                }
+                const dateStr = displayDate.toLocaleDateString('ja-JP', {
+                    year: 'numeric', month: '2-digit', day: '2-digit'
+                });
+                document.getElementById('live-clock').innerText =
+                    `${dateStr} ${h}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+            },
+
+            // -------------------------------------------------------
+            // 段階ロック制御
+            // -------------------------------------------------------
+
+            /**
+             * 画面サイズを監視して段階的にロックを適用する
+             *
+             * 段階1（通常）   : W≥1280 & H≥600  → 全機能使用可
+             * 段階2（警告）   : W≥1280 & H 500〜599 → Section02を非表示・編集不可
+             * 段階3（フルロック）: W<1280 or H<500  → 赤オーバーレイで全操作ブロック
+             */
+            checkLock() {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                const overlay  = document.getElementById('lock-overlay');
+                const secEdit  = document.getElementById('sec-edit');
+                const lockMsg  = document.getElementById('lock-message');
+                const lockSize = document.getElementById('lock-size-display');
+
+                // 現在サイズを常時表示（デバッグ＆ユーザー案内用）
+                lockSize.innerText = `${w}px × ${h}px`;
+
+                if (w < this.LOCK_W || h < this.WARN_H) {
+                    // 段階3: フルロック
+                    overlay.classList.add('active');
+                    if (w < this.LOCK_W) {
+                        lockMsg.innerHTML =
+                            `横幅が不足しています。<br>` +
+                            `<strong>${this.LOCK_W}px 以上</strong>に拡大してください。<br>` +
+                            `（現在: ${w}px）`;
+                    } else {
+                        lockMsg.innerHTML =
+                            `縦幅が不足しています。<br>` +
+                            `<strong>${this.WARN_H}px 以上</strong>に拡大してください。<br>` +
+                            `（現在: ${h}px）`;
+                    }
+                    secEdit.style.display = 'none';
+
+                } else if (h < this.LOCK_H) {
+                    // 段階2: Section02非表示・編集不可（フルロックは解除）
+                    overlay.classList.remove('active');
+                    secEdit.style.display = 'none';
+
+                } else {
+                    // 段階1: 通常動作
+                    overlay.classList.remove('active');
+                    secEdit.style.display = '';
+                }
+            },
+
+            // -------------------------------------------------------
+            // クリップボード貼り付け
+            // -------------------------------------------------------
+
+            async pasteFromClip() {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (!text) {
+                        this.toast("クリップボードが空です");
+                        return;
+                    }
+                    // MAX_LENGTH 文字でトリミング
+                    this.orgStr  = text.substring(0, this.MAX_LENGTH);
+                    this.editArr = this.orgStr.split('');
+
+                    document.getElementById('btn-initial-paste').style.display = 'none';
+                    document.getElementById('edit-hint').style.display         = 'none';
+                    document.getElementById('result-hint').style.display       = 'none';
+
+                    this.renderOrg();
+                    this.refresh();
+                } catch (err) {
+                    alert("クリップボードへのアクセス許可が必要です。\nブラウザのアドレスバー左のアイコンから許可してください。");
+                }
+            },
+
+            // -------------------------------------------------------
+            // 文字種判定
+            // -------------------------------------------------------
+
+            /**
+             * 文字種を返す（ルビ表示＆全角チェック兼用）
+             * @param {string} c - 判定する1文字
+             * @returns {string} 文字種ラベル
+             */
+            getCharType(c) {
+                if (c === ' ')  return '半空';
+                if (c === '　') return '全空';
+                if (/[0-9]/.test(c))   return '半数';
+                if (/[a-zA-Z]/.test(c)) return '半英';
+                if (/[!-~]/.test(c))   return '半記';
+                return '全漢';
+            },
+
+            /** 全角文字かどうかを返す */
+            isZenkaku(c) {
+                return this.getCharType(c).startsWith('全');
+            },
+
+            // -------------------------------------------------------
+            // レンダリング
+            // -------------------------------------------------------
+
+            /** Section 01（元パラメータ）を描画 */
+            renderOrg() {
+                const container = document.getElementById('grid-org');
+                container.innerHTML = '';
+                document.getElementById('org-len-label').innerText = `${this.orgStr.length}文字`;
+
+                for (let i = 0; i < this.orgStr.length; i++) {
+                    container.appendChild(this.createSlot(this.orgStr[i], i, false));
+                }
+            },
+
+            /**
+             * 1文字スロットを生成する
+             * @param {string}  char      - 表示する文字
+             * @param {number}  index     - 何文字目か（0始まり）
+             * @param {boolean} isEditable - 入力可能にするか
+             * @returns {HTMLElement}
+             */
+            createSlot(char, index, isEditable) {
+                const slot = document.createElement('div');
+                slot.className = 'slot';
+
+                // 番号ラベル
+                const num = document.createElement('div');
+                num.className = 'slot-num';
+                num.innerText = index + 1;
+
+                // 文字ボックス（編集可 or 表示のみ）
+                const box = isEditable
+                    ? document.createElement('input')
+                    : document.createElement('div');
+                box.className = 'slot-input';
+
+                // 全角ならエラーボーダー
+                if (this.isZenkaku(char)) box.classList.add('is-error');
+
+                if (isEditable) {
+                    box.value = char;
+
+                    // 元文字から変更されていれば黄色ハイライト
+                    if (this.orgStr && char !== this.orgStr[index]) {
+                        box.classList.add('changed');
+                    }
+
+                    box.addEventListener('focus', () => box.select());
+
+                    box.addEventListener('input', (e) => {
+                        // 入力は1文字のみ。空になったらスペースで補完
+                        const val = e.target.value.charAt(0) || ' ';
+                        box.value = val;
+                        this.editArr[index] = val;
+                        this.refresh();
+
+                        // 入力したら次のスロットへフォーカス移動
+                        const next = slot.nextElementSibling;
+                        if (val !== ' ' && next) {
+                            const nextInput = next.querySelector('input');
+                            if (nextInput) nextInput.focus();
+                        }
+                    });
+
+                    box.addEventListener('keydown', (e) => {
+                        // Backspace で空なら前のスロットへ
+                        if (e.key === 'Backspace' && box.value === '') {
+                            const prev = slot.previousElementSibling;
+                            if (prev) {
+                                const prevInput = prev.querySelector('input');
+                                if (prevInput) prevInput.focus();
+                            }
+                        }
+                    });
+                } else {
+                    // 表示モード：スペースは空白、全角スペースは□で視覚化
+                    box.innerText = char === ' ' ? '' : (char === '　' ? '□' : char);
+                }
+
+                // 文字種ルビ
+                const ruby = document.createElement('div');
+                ruby.className = 'slot-ruby';
+                ruby.innerText = this.getCharType(char);
+
+                slot.appendChild(num);
+                slot.appendChild(box);
+                slot.appendChild(ruby);
+                return slot;
+            },
+
+            // -------------------------------------------------------
+            // リフレッシュ（Section 02 & 03 の再描画 + フッター更新）
+            // -------------------------------------------------------
+
+            refresh() {
+                if (!this.orgStr) return;
+
+                const gEdit = document.getElementById('grid-edit');
+                const gRes  = document.getElementById('grid-result');
+                gEdit.innerHTML = '';
+                gRes.innerHTML  = '';
+
+                let diffs = 0;
+                let zens  = 0;
+
+                for (let i = 0; i < this.editArr.length; i++) {
+                    const char = this.editArr[i];
+                    if (char !== this.orgStr[i]) diffs++;
+                    if (this.isZenkaku(char))    zens++;
+
+                    // Section 02: 編集スロット
+                    gEdit.appendChild(this.createSlot(char, i, true));
+
+                    // Section 03: 結果スロット
+                    const rSlot = this.createSlot(char, i, false);
+                    if (char !== this.orgStr[i]) {
+                        rSlot.querySelector('.slot-input').classList.add('changed');
+                    }
+                    gRes.appendChild(rSlot);
+                }
+
+                // フッター統計の更新
+                document.getElementById('stat-len').innerHTML =
+                    `${this.orgStr.length}<span class="unit">文字</span>`;
+                document.getElementById('stat-diff').innerHTML =
+                    `${diffs}<span class="unit">箇所</span>`;
+
+                // 全角チェック結果によってUIを切り替え
+                const secResult = document.getElementById('sec-result');
+                const resBadge  = document.getElementById('res-badge');
+                const btnCopy   = document.getElementById('btn-copy');
+                const statZen   = document.getElementById('stat-zen');
+
+                if (zens > 0) {
+                    // NG: 全角あり → コピーをブロック
+                    statZen.innerHTML = `<span class="text-error status-text">全角あり</span>`;
+                    secResult.style.backgroundColor = 'var(--color-error)';
+                    resBadge.innerText        = "CHECK NG";
+                    resBadge.style.background = "var(--bs-red)";
+                    btnCopy.disabled = true;
+                } else {
+                    // OK: 半角のみ → コピー許可
+                    statZen.innerHTML = `<span class="text-safe status-text">半角のみ</span>`;
+                    resBadge.innerText        = diffs > 0 ? "CHECK OK" : "READY";
+                    resBadge.style.background = diffs > 0 ? "var(--bs-green)" : "var(--bs-blue)";
+                    secResult.style.backgroundColor = diffs > 0 ? 'var(--color-safe)' : 'var(--color-edit)';
+                    btnCopy.disabled = false;
+                }
+
+                document.getElementById('org-len-label').style.background = "#1e293b";
+                const editBadge = document.getElementById('edit-diff-label');
+                editBadge.innerText        = `変更: ${diffs}`;
+                editBadge.style.background = diffs > 0 ? "var(--bs-blue)" : "#94a3b8";
+            },
+
+            // -------------------------------------------------------
+            // コピー・証跡・リセット
+            // -------------------------------------------------------
+
+            /** 編集後のパラメータ文字列をクリップボードにコピー */
+            copy() {
+                navigator.clipboard.writeText(this.editArr.join(''))
+                    .then(() => this.toast("✅ コピー完了"))
+                    .catch(() => this.toast("❌ コピーに失敗しました"));
+            },
+
+            /** 現在の画面を証跡画像としてクリップボードにコピー */
+            async screenshot() {
+                if (typeof html2canvas === 'undefined') {
+                    this.toast("❌ html2canvas が読み込まれていません");
+                    return;
+                }
+
+                try {
+                    const target = document.getElementById('app-wrapper');
+                    const canvas = await html2canvas(target, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: "#cbd5e1",
+                        onclone: (clonedDoc) => {
+                            // input要素はcanvasに描画されないため、divに変換して証跡を正確に再現
+                            clonedDoc.querySelectorAll('input.slot-input').forEach(input => {
+                                const div = clonedDoc.createElement('div');
+                                div.className  = input.className;
+                                div.style.cssText = window.getComputedStyle(input).cssText;
+                                div.innerText  = input.value;
+                                div.style.display         = "flex";
+                                div.style.alignItems      = "center";
+                                div.style.justifyContent  = "center";
+                                div.style.lineHeight      = "1";
+                                input.parentNode.replaceChild(div, input);
+                            });
+                        }
+                    });
+
+                    canvas.toBlob(blob => {
+                        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+                            .then(() => this.toast("📸 証跡画像をコピーしました"))
+                            .catch(() => this.toast("❌ 画像コピーに失敗しました"));
+                    });
+                } catch (err) {
+                    this.toast("❌ スクリーンショットに失敗しました");
+                    console.error(err);
+                }
+            },
+
+            /** 全データをリセット */
+            reset() {
+                if (confirm("全データをリセットしますか？\n入力内容はすべて消去されます。")) {
+                    location.reload();
+                }
+            },
+
+            /** トースト通知を表示 */
+            toast(message) {
+                const t = document.getElementById('toast');
+                t.innerText    = message;
+                t.style.display = 'block';
+                setTimeout(() => { t.style.display = 'none'; }, 3000);
+            }
+        };
+
+        // アプリ起動
+        app.init();
+    </script>
+</body>
+</html>

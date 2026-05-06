@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JP1 Parameter Safeguard [PACMAN v11 Golden-Ratio]</title>
+    <style>
+        /* --- 0. ゴールデン・サイズ・システム（比率連動定義） --- */
+        :root {
+            /* 【軸】文字ボックスの基準高さ。ここを変えると全てが連動します */
+            /* 1080pxの画面で2行が最適に見える 7.2vh をBPとして設定 */
+            --slot-base: clamp(38px, 5.5vh, 120px); 
+
+            /* 【比率】各パーツを基準値からの倍率で定義（黄金比調整済み） */
+            --font-main: calc(var(--slot-base) * 0.6);   /* ボックス内文字 */
+            --font-sub: calc(var(--slot-base) * 0.22);   /* 番号・ルビ */
+            --font-title: calc(var(--slot-base) * 0.25); /* セクションタイトル */
+            --card-pad-v: calc(var(--slot-base) * 0.4);  /* セクション上下余白 */
+            --card-pad-h: calc(var(--slot-base) * 0.5);  /* セクション左右余白 */
+            --footer-h: calc(var(--slot-base) * 1.6);    /* フッター高さ */
+
+            /* 色味は v8.1 を完全継承 */
+            --color-org: #f8fafc; --color-edit: #d5ecfb; --color-safe: #d4fed6;
+            --color-error: #ff979e; --bs-dark: #f8fafc; --bs-blue: #3b82f6;
+            --bs-green: #10b981; --bs-red: #f43f5e; --border-light: rgba(0, 0, 0, 0.08);
+        }
+
+        /* --- 1. 基本構造：スクロールなし・全画面 --- */
+        html, body {
+            height: 100%; margin: 0; padding: 0; overflow: hidden;
+            font-family: "BIZ UDGothic", "Segoe UI", sans-serif;
+            background-color: #cbd5e1;
+        }
+
+        #app-wrapper { display: flex; flex-direction: column; height: 100vh; position: relative; padding-bottom: 15px; box-sizing: border-box; }
+
+        header {
+            flex: 0 0 50px; background: var(--bs-dark); color: #3a4e69;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 24px; border-bottom: 1px solid var(--border-light);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05); z-index: 1000; position: relative;
+        }
+
+        #live-clock {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            font-family: 'Cascadia Code', monospace; font-size: 1.1rem; font-weight: 600;
+        }
+
+        /* --- 2. メインエリア：3段均等 ＋ 比率パディング --- */
+        .main-content {
+            flex: 1; display: flex; flex-direction: column;
+            padding: 6px; gap: 4px; box-sizing: border-box;
+        }
+
+        .section-card {
+            flex: 1; border-radius: 12px; border: 1px solid var(--border-light);
+            display: flex; flex-direction: row; overflow: hidden; background: white;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        #sec-org { background-color: var(--color-org); }
+        #sec-edit { background-color: var(--color-edit); }
+        #sec-result { transition: background-color 0.3s; }
+
+        /* サイドバー：タイトルも比率連動 */
+        .sidebar {
+            flex: 0 0 150px; display: flex; flex-direction: column;
+            justify-content: space-between; align-items: center;
+            background: rgba(0, 0, 0, 0.03); border-right: 1px solid var(--border-light);
+            padding: 16px 8px; text-align: center;
+        }
+
+        .sidebar-title {
+            font-size: var(--font-title); font-weight: 800; color: #475569;
+            letter-spacing: 0.12em; line-height: 1.4;
+            display: flex; flex-direction: column; align-items: center;
+        }
+        .sidebar-title::before {
+            content: "SECTION " attr(data-num); display: block; font-size: calc(var(--font-title) * 0.7);
+            opacity: 0.5; letter-spacing: 0.2em; margin-bottom: 4px;
+        }
+
+        .sidebar-stats { font-size: 0.85rem; font-weight: 800; background: #475569; color: white; padding: 4px 12px; border-radius: 6px; min-width: 80px; }
+
+        /* 作業エリア：パディングを比率で固定 */
+        .body-content {
+            flex: 1; padding: var(--card-pad-v) var(--card-pad-h);
+            display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative;
+        }
+
+        /* グリッド：40列BP設定（80文字対応） */
+        .char-grid {
+            display: grid;
+            grid-template-columns: repeat(40, 1fr); /* 40列固定：2行で80文字 */
+            column-gap: 4px; row-gap: 2.0vh;
+            width: 100%; max-width: 1750px;
+        }
+
+        /* --- 3. スロット ＆ ボックス：完全比率連動 --- */
+        .slot { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+        .slot-num, .slot-ruby {
+            font-size: var(--font-sub); font-family: monospace; font-weight: 800; color: #64748b; white-space: nowrap;
+        }
+        .slot-num { margin-bottom: 2px; }
+        .slot-ruby { margin-top: 3px; }
+
+        .slot-input {
+            width: 100%; height: var(--slot-base);
+            display: flex !important; align-items: center !important; justify-content: center !important;
+            line-height: 1 !important; text-align: center !important;
+            padding: 0 !important; margin: 0 !important;
+            font-size: var(--font-main); font-weight: bold;
+            border: 1px solid #e2e8f0; border-radius: 4px; background: white;
+            font-family: 'Courier New', monospace; box-sizing: border-box; transition: all 0.2s;
+            outline: none; -webkit-appearance: none; appearance: none;
+        }
+
+        .slot-input:focus { background-color: #fdfef0; border-color: var(--bs-blue); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+        .slot-input.is-error { border: calc(var(--slot-base) * 0.08) solid var(--bs-red) !important; }
+        .slot-input.changed { background-color: #fef08a !important; border-color: #eab308; }
+
+        .placeholder-hint { position: absolute; color: #cbd5e1; font-size: 1.8rem; font-weight: bold; pointer-events: none; }
+
+        /* --- 4. フッター：高さも比率連動してラインを統一 --- */
+        footer {
+            flex: 0 0 var(--footer-h); background: #f1f5f9; border-top: 1px solid var(--border-light);
+            display: flex; flex-direction: row; padding: 10px 20px; gap: 15px; box-sizing: border-box;
+        }
+
+        .footer-left, .footer-right { flex: 1; display: flex; align-items: stretch; gap: 12px; }
+
+        .status-card {
+            flex: 1; background: white; border-radius: 12px; padding: 5px 15px;
+            display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--border-light);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .card-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
+        .card-value { font-family: "Bahnschrift", sans-serif; font-size: calc(var(--footer-h) * 0.4); font-weight: 700; line-height: 1; color: #1e293b; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+        .unit { font-size: 0.4em; margin-left: 4px; font-weight: 800; color: #64748b; vertical-align: baseline; }
+        .status-text { font-size: calc(var(--footer-h) * 0.3); font-weight: 800; vertical-align: middle; }
+
+        .btn-modern { border-radius: 10px; border: none; color: white; font-weight: 800; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-copy { flex: 2; background: var(--bs-green); font-size: calc(var(--footer-h) * 0.25); }
+        .btn-copy:disabled { background: #cbd5e1; cursor: not-allowed; }
+        .btn-ss { flex: 1; background: #3b82f6; font-size: 1rem; }
+
+        /* --- 5. ロック画面（今回は無効化：display: none） --- */
+        #lock-overlay { display: none !important; }
+
+        #toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(15, 23, 42, 0.9); color: white; padding: 20px 40px; border-radius: 12px; display: none; z-index: 10002; font-size: 1.5rem; font-weight: bold; }
+
+        .text-safe { color: var(--bs-green); }
+        .text-error { color: var(--bs-red); }
+
+        /* 証跡モード変身のみ維持 */
+        @media (max-height: 600px) {
+            #sec-edit, footer { display: none !important; }
+            .section-card { flex: 1 !important; height: auto !important; }
+            :root { --slot-base: clamp(50px, 12vh, 180px) !important; }
+        }
+
+        /* --- [臨時テスト] 会社のモニターサイズを1:1で再現する魔法 --- */
+        #app-wrapper {
+            /* 1. オーナーが測った実測値をそのまま指定！ */
+            width: 52.5cm !important; 
+            height: 29.0cm !important;
+            
+            /* 2. 画面からはみ出しても「縮まない」ように固定 */
+            flex: 0 0 auto !important;
+            
+            /* 3. 中身がズレないように位置を左上に固定 */
+            position: absolute !important;
+            top: 0; left: 0;
+        }
+
+        html, body {
+            /* 4. ノートPCの画面を突き抜けても、スクロールして見れるように開放 */
+            overflow: auto !important; 
+            height: auto !important;
+            background-color: #333; /* 画面外は暗くして集中力をアップ */
+        }
+
+    </style>
+    <script>
+        /* ここに html2canvas.min.js の全コードを貼り付け */
+    </script>
+</head>
+
+<body>
+    <div id="app-wrapper">
+        <!-- ロック画面（現在は物理的に無効） -->
+        <div id="lock-overlay"><h1>⚠️ 視認性アラート</h1></div>
+
+        <header>
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+                <div id="app-logo" style="color: #3b82f6;">PACMAN</div>
+                <span style="font-size: 0.75rem; font-weight: 600; color: #64748b; font-family: 'BIZ UDGothic', sans-serif !important;">
+                    v11 Golden-Ratio Safeguard
+                </span>
+            </div>
+            <div id="live-clock"></div>
+            <button class="btn-modern" style="background:#f1f5f9; color:#f43f5e; border:1px solid #fecaca; height:32px; padding:0 16px; font-size: 0.75rem; box-shadow:none;" 
+                    onclick="app.reset()">RESET</button>
+        </header>
+
+        <div class="main-content" id="capture-area">
+            <div class="section-card" id="sec-org">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="01">元パラメータ</div>
+                    <div id="org-len-label" class="sidebar-stats">READY</div>
+                </div>
+                <div class="body-content">
+                    <button id="btn-initial-paste" class="btn-modern" style="background:var(--bs-blue); padding:15px 40px; font-size:1.5rem; z-index:10;" onclick="app.pasteFromClip()">①パラメータを貼り付ける</button>
+                    <div id="grid-org" class="char-grid"></div>
+                </div>
+            </div>
+
+            <div class="section-card" id="sec-edit">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="02">編集ブロック</div>
+                    <div id="edit-diff-label" class="sidebar-stats">待機中</div>
+                </div>
+                <div class="body-content">
+                    <div id="edit-hint" class="placeholder-hint">②編集作業エリア</div>
+                    <div id="grid-edit" class="char-grid"></div>
+                </div>
+            </div>
+
+            <div class="section-card" id="sec-result">
+                <div class="sidebar">
+                    <div class="sidebar-title" data-num="03">編集後確認</div>
+                    <div id="res-badge" class="sidebar-stats" style="background:var(--bs-blue);">READY</div>
+                </div>
+                <div class="body-content">
+                    <div id="result-hint" class="placeholder-hint">③最終確認</div>
+                    <div id="grid-result" class="char-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <div class="footer-left">
+                <div class="status-card">
+                    <span class="card-label">文字数</span>
+                    <span id="stat-len" class="card-value">-</span>
+                </div>
+                <div class="status-card">
+                    <span class="card-label">変更箇所</span>
+                    <span id="stat-diff" class="card-value">-</span>
+                </div>
+                <div class="status-card">
+                    <span class="card-label">全角有無</span>
+                    <span id="stat-zen" class="card-value">-</span>
+                </div>
+            </div>
+            <div class="footer-right">
+                <button id="btn-copy" class="btn-modern btn-copy" disabled onclick="app.copy()">④結果をコピーする</button>
+                <button class="btn-modern btn-ss" onclick="app.screenshot()">証跡画像コピー</button>
+            </div>
+        </footer>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const app = {
+            orgStr: "", editArr: [],
+            init() { 
+                setInterval(() => this.tick(), 1000); 
+                this.tick();
+            },
+            tick() {
+                const now = new Date();
+                let displayDate = new Date(now);
+                let h = now.getHours();
+                if (h < 8) { h += 24; displayDate.setDate(now.getDate() - 1); }
+                const dateStr = displayDate.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
+                document.getElementById('live-clock').innerText = `${dateStr} ${h}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+            },
+            async pasteFromClip() {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (!text) return;
+                    this.orgStr = text.substring(0, 100);
+                    this.editArr = this.orgStr.split('');
+                    document.getElementById('btn-initial-paste').style.display = 'none';
+                    document.getElementById('edit-hint').style.display = 'none';
+                    document.getElementById('result-hint').style.display = 'none';
+                    this.renderOrg(); this.refresh();
+                } catch (err) { alert("貼り付けにはクリップボードの許可が必要です。"); }
+            },
+            getCharType(c) {
+                if (c === ' ') return '半空'; if (c === '　') return '全空';
+                if (/[0-9]/.test(c)) return '半数'; if (/[a-z]/i.test(c)) return '半英';
+                if (/[!-~]/.test(c)) return '半記'; return '全漢';
+            },
+            renderOrg() {
+                const container = document.getElementById('grid-org'); container.innerHTML = '';
+                document.getElementById('org-len-label').innerText = this.orgStr.length + "文字";
+                for (let i = 0; i < this.orgStr.length; i++) container.appendChild(this.createSlot(this.orgStr[i], i, false));
+            },
+            createSlot(char, index, isEditable) {
+                const slot = document.createElement('div'); slot.className = 'slot';
+                const num = document.createElement('div'); num.className = 'slot-num'; num.innerText = index + 1;
+                const box = isEditable ? document.createElement('input') : document.createElement('div');
+                box.className = 'slot-input';
+                if (this.getCharType(char).includes('全')) box.classList.add('is-error');
+                if (isEditable) {
+                    box.value = char;
+                    if (this.orgStr && char !== this.orgStr[index]) box.classList.add('changed');
+                    box.addEventListener('focus', () => box.select());
+                    box.addEventListener('input', (e) => {
+                        let val = e.target.value.charAt(0) || ' ';
+                        this.editArr[index] = val;
+                        this.refresh();
+                        if (val !== ' ' && slot.nextElementSibling) slot.nextElementSibling.querySelector('input').focus();
+                    });
+                    box.addEventListener('keydown', (e) => {
+                        if (e.key === 'Backspace' && box.value === '' && slot.previousElementSibling) slot.previousElementSibling.querySelector('input').focus();
+                    });
+                } else {
+                    box.innerText = char === ' ' ? '' : (char === '　' ? '□' : char);
+                }
+                const ruby = document.createElement('div'); ruby.className = 'slot-ruby'; ruby.innerText = this.getCharType(char);
+                slot.appendChild(num); slot.appendChild(box); slot.appendChild(ruby); return slot;
+            },
+            refresh() {
+                const gEdit = document.getElementById('grid-edit'); const gRes = document.getElementById('grid-result');
+                if (!this.orgStr) return;
+                gEdit.innerHTML = ''; gRes.innerHTML = ''; let diffs = 0; let zens = 0;
+                for (let i = 0; i < this.editArr.length; i++) {
+                    const char = this.editArr[i]; if (char !== this.orgStr[i]) diffs++;
+                    if (this.getCharType(char).includes('全')) zens++;
+                    gEdit.appendChild(this.createSlot(char, i, true));
+                    const rSlot = this.createSlot(char, i, false);
+                    if (char !== this.orgStr[i]) rSlot.querySelector('.slot-input').classList.add('changed');
+                    gRes.appendChild(rSlot);
+                }
+                const sLen = document.getElementById('stat-len'); const sDiff = document.getElementById('stat-diff');
+                const sZen = document.getElementById('stat-zen'); const rSec = document.getElementById('sec-result');
+                const resBadge = document.getElementById('res-badge');
+                sLen.innerHTML = `${this.orgStr.length}<span class="unit">文字</span>`;
+                sDiff.innerHTML = `${diffs}<span class="unit">箇所</span>`;
+                if (zens > 0) {
+                    sZen.innerHTML = `<span class="text-error status-text">全角あり</span>`;
+                    rSec.style.backgroundColor = 'var(--color-error)';
+                    resBadge.innerText = "CHECK NG"; resBadge.style.background = "var(--bs-red)";
+                    document.getElementById('btn-copy').disabled = true;
+                } else {
+                    sZen.innerHTML = `<span class="text-safe status-text">半角のみ</span>`;
+                    resBadge.innerText = (diffs > 0) ? "CHECK OK" : "READY";
+                    resBadge.style.background = (diffs > 0) ? "var(--bs-green)" : "var(--bs-blue)";
+                    document.getElementById('btn-copy').disabled = false;
+                    rSec.style.backgroundColor = (diffs > 0) ? 'var(--color-safe)' : 'var(--color-edit)';
+                }
+                document.getElementById('org-len-label').style.background = "#1e293b";
+                const editBadge = document.getElementById('edit-diff-label');
+                editBadge.innerText = "変更: " + diffs; editBadge.style.background = (diffs > 0) ? "var(--bs-blue)" : "#94a3b8";
+            },
+            copy() { navigator.clipboard.writeText(this.editArr.join('')).then(() => this.toast("コピー完了")); },
+            async screenshot() {
+                const target = document.getElementById('app-wrapper');
+                const canvas = await html2canvas(target, {
+                    scale: 2, useCORS: true, backgroundColor: "#cbd5e1",
+                    onclone: (clonedDoc) => {
+                        const inputs = clonedDoc.querySelectorAll('input.slot-input');
+                        inputs.forEach(input => {
+                            const div = clonedDoc.createElement('div');
+                            div.className = input.className; div.style.cssText = window.getComputedStyle(input).cssText;
+                            div.innerText = input.value; div.style.display = "flex";
+                            div.style.alignItems = "center"; div.style.justifyContent = "center";
+                            div.style.lineHeight = "1"; input.parentNode.replaceChild(div, input);
+                        });
+                    }
+                });
+                canvas.toBlob(blob => {
+                    const item = new ClipboardItem({ "image/png": blob });
+                    navigator.clipboard.write([item]).then(() => this.toast("証跡画像をコピーしました"));
+                });
+            },
+            reset() { if (confirm("全データをリセットしますか？")) location.reload(); },
+            toast(m) { const t = document.getElementById('toast'); t.innerText = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3000); }
+        };
+        app.init();
+    </script>
+</body>
+</html>

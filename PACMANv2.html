@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JP1 Parameter Safeguard [PACMAN v2]</title>
+    <!-- 
+    【モダンUI定義】
+    Bootstrapの設計思想（Card, Shadow, Spacing）を取り入れたカスタムCSS。
+    外部通信を行わず、軽量かつモダンな外観を実現。
+    -->
+    <style>
+        :root {
+            --bs-blue: #0d6efd;
+            --bs-green: #198754;
+            --bs-red: #dc3545;
+            --bs-yellow: #ffc107;
+            --bs-gray: #6c757d;
+            --bs-light: #f8f9fa;
+            --bs-dark: #212529;
+            --bs-body-bg: #e9ecef;
+            --card-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        body {
+            background-color: var(--bs-body-bg);
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, "BIZ UDゴシック", sans-serif;
+            margin: 0; padding: 0;
+            height: 100vh; display: flex; flex-direction: column;
+            color: var(--bs-dark);
+        }
+
+        /* ヘッダーデザインの近代化 */
+        header {
+            background: linear-gradient(90deg, #2b3035, #495057);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+
+        .main-container {
+            flex: 1;
+            display: flex; flex-direction: column;
+            padding: 1rem; gap: 1rem;
+            max-width: 1400px; margin: 0 auto; width: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        /* 各セクションのカード化 (Bootstrap Card風) */
+        .card {
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: var(--card-shadow);
+            display: flex; flex-direction: column;
+            border: 1px solid rgba(0,0,0,0.125);
+            transition: transform 0.2s;
+        }
+
+        .card-header {
+            padding: 0.5rem 1rem;
+            background-color: rgba(0,0,0,0.03);
+            border-bottom: 1px solid rgba(0,0,0,0.125);
+            font-weight: bold;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.85rem;
+        }
+
+        .card-body { padding: 1rem; flex: 1; display: flex; flex-direction: column; }
+
+        /* 入力エリアの洗練 */
+        textarea {
+            width: 100%; border: 1px solid #ced4da;
+            border-radius: 0.25rem; padding: 0.5rem;
+            font-family: 'Cascadia Code', 'Courier New', monospace;
+            font-size: 1.1rem; resize: none;
+            transition: border-color 0.15s ease-in-out;
+            background-color: #fff;
+        }
+        textarea:focus {
+            border-color: var(--bs-blue); outline: 0;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        textarea:disabled { background-color: #e9ecef; color: #495057; }
+
+        /* 下段：結果表示の動的カラー（Bootstrap Alert風） */
+        #result-card { border-left: 8px solid var(--bs-blue); }
+        #result-card.status-ok { border-left-color: var(--bs-green); }
+        #result-card.status-error { border-left-color: var(--bs-red); }
+
+        .char-grid {
+            display: flex; flex-wrap: wrap; gap: 6px;
+            padding: 1rem; background: #fdfdfd; border-radius: 4px;
+            min-height: 120px; overflow-y: auto; align-content: flex-start;
+        }
+
+        /* 属性ルビのモダン・スロット */
+        .slot {
+            display: flex; flex-direction: column; align-items: center; width: 48px;
+        }
+        .slot-char {
+            width: 100%; height: 42px; line-height: 42px; text-align: center;
+            font-size: 1.6rem; font-weight: bold; border: 1px solid #dee2e6;
+            border-radius: 4px; background: white;
+        }
+        .slot-ruby {
+            font-size: 0.65rem; margin-top: 4px; color: #6c757d; font-weight: 600;
+        }
+        .highlight-change { background-color: #fff3cd !important; color: #856404 !important; }
+
+        /* 操作パネル (Bootstrap Button Group風) */
+        .footer-panel {
+            background: white; padding: 1rem; border-radius: 0.5rem;
+            box-shadow: var(--card-shadow);
+            display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 1rem;
+            align-items: center;
+        }
+
+        .btn {
+            display: inline-block; font-weight: 400; text-align: center;
+            vertical-align: middle; cursor: pointer; border: 1px solid transparent;
+            padding: 0.75rem 1rem; font-size: 1rem; border-radius: 0.3rem;
+            transition: all 0.2s; text-decoration: none;
+        }
+        .btn-primary { background-color: var(--bs-blue); color: white; }
+        .btn-success { background-color: var(--bs-green); color: white; width: 100%; font-size: 1.25rem; font-weight: bold; }
+        .btn-danger { background-color: var(--bs-red); color: white; }
+        .btn-secondary { background-color: var(--bs-gray); color: white; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .status-msg { font-weight: bold; font-size: 1.1rem; text-align: center; }
+        .badge { padding: 0.35rem 0.65rem; border-radius: 50rem; font-size: 0.75rem; background: #eee; }
+
+        /* 凡例ホバー */
+        .info-badge { cursor: help; color: var(--bs-blue); border: 1px solid var(--bs-blue); border-radius: 50%; width: 18px; height: 18px; display: inline-flex; justify-content: center; align-items: center; font-size: 12px; }
+    </style>
+    <!-- 証跡コピー用ライブラリ (html2canvas) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+<header>
+    <div style="font-weight: bold; font-size: 1.2rem;">PACMAN <span style="font-weight: normal; font-size: 0.8rem; opacity: 0.8;">v2.0 Project Safeguard</span></div>
+    <div id="live-clock" style="font-family: monospace; letter-spacing: 1px;"></div>
+    <button class="btn btn-danger" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;" onclick="app.reset()">RESET</button>
+</header>
+
+<div class="main-container" id="capture-area">
+    <!-- 上段：ORIGINAL -->
+    <div class="card" style="flex: 0 0 auto;">
+        <div class="card-header">
+            <span><span style="color:var(--bs-blue)">●</span> ORIGINAL - 比較元の貼り付け</span>
+            <span id="label-org-len" class="badge">0 文字</span>
+        </div>
+        <div class="card-body" style="padding: 0.75rem;">
+            <textarea id="txt-org" rows="2" placeholder="ここに元のパラメータをコピー＆ペーストしてください..."></textarea>
+        </div>
+    </div>
+
+    <!-- 中段：EDIT -->
+    <div class="card" style="flex: 0 0 auto;">
+        <div class="card-header">
+            <span><span style="color:var(--bs-yellow)">●</span> EDIT - 修正作業エリア</span>
+            <div id="edit-meta">
+                <span id="label-edit-len" class="badge">0 / 0 文字</span>
+                <span id="label-diff-cnt" class="badge" style="background:#fff3cd; color:#856404;">変更: 0</span>
+            </div>
+        </div>
+        <div class="card-body" style="padding: 0.75rem;">
+            <textarea id="txt-edit" rows="2" placeholder="修正を入力してください..." disabled></textarea>
+        </div>
+    </div>
+
+    <!-- 下段：RESULT -->
+    <div id="result-card" class="card" style="flex: 1;">
+        <div class="card-header">
+            <span><span style="color:var(--bs-green)">●</span> RESULT - 属性確認プレビュー</span>
+            <span class="info-badge" title="半空:半角スペース, 全空:全角スペース(□), 半数:数字, 半英:英字, 全漢:その他全角">?</span>
+        </div>
+        <div class="card-body">
+            <div id="preview-grid" class="char-grid">
+                <!-- 動的生成 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作パネル -->
+    <div class="footer-panel">
+        <div id="status-text" class="status-msg" style="color: var(--bs-gray);">待機中</div>
+        <div>
+            <button id="btn-copy" class="btn btn-success" disabled onclick="app.copy()">結果をコピーする</button>
+        </div>
+        <div style="text-align: right;">
+            <button class="btn btn-secondary" onclick="app.screenshot()">証跡画像コピー</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast-msg" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.8); color:white; padding:10px 20px; border-radius:5px; display:none; z-index:2000;"></div>
+
+<script>
+    /**
+     * PACMAN v2 制御ロジック
+     * 構造化された「app」オブジェクトで管理。
+     */
+    const app = {
+        dom: {
+            org: document.getElementById('txt-org'),
+            edit: document.getElementById('txt-edit'),
+            grid: document.getElementById('preview-grid'),
+            copyBtn: document.getElementById('btn-copy'),
+            resultCard: document.getElementById('result-card'),
+            status: document.getElementById('status-text'),
+            clock: document.getElementById('live-clock'),
+            orgLen: document.getElementById('label-org-len'),
+            editLen: document.getElementById('label-edit-len'),
+            diffCnt: document.getElementById('label-diff-cnt')
+        },
+
+        init() {
+            // イベント登録
+            this.dom.org.addEventListener('change', () => this.lockOriginal());
+            this.dom.edit.addEventListener('input', () => this.validate());
+            
+            // 時計開始
+            setInterval(() => this.tick(), 1000);
+            this.tick();
+        },
+
+        tick() {
+            const now = new Date();
+            this.dom.clock.innerText = now.toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        },
+
+        lockOriginal() {
+            if (this.dom.org.value.trim() !== "") {
+                this.dom.org.disabled = true;
+                this.dom.edit.disabled = false;
+                this.dom.edit.value = this.dom.org.value;
+                this.dom.edit.focus();
+                this.validate();
+            }
+        },
+
+        getAttr(c) {
+            if (c === ' ') return '半空';
+            if (c === '　') return '全空';
+            if (/[0-9]/.test(c)) return '半数';
+            if (/[a-z]/i.test(c)) return '半英';
+            if (/[!-~]/.test(c)) return '半記';
+            return '全漢';
+        },
+
+        validate() {
+            const orgVal = this.dom.org.value;
+            let editVal = this.dom.edit.value;
+
+            // 100文字制限
+            if (editVal.length > 100) {
+                editVal = editVal.substring(0, 100);
+                this.dom.edit.value = editVal;
+            }
+
+            const orgLen = orgVal.length;
+            const editLen = editVal.length;
+            let diffs = 0;
+
+            this.dom.grid.innerHTML = '';
+            
+            // 比較とグリッド生成
+            for (let i = 0; i < editLen; i++) {
+                const char = editVal[i];
+                const isChanged = (i >= orgLen || char !== orgVal[i]);
+                if (isChanged) diffs++;
+
+                const slot = document.createElement('div');
+                slot.className = 'slot';
+                
+                const charBox = document.createElement('div');
+                charBox.className = 'slot-char' + (isChanged ? ' highlight-change' : '');
+                charBox.innerText = (char === ' ') ? '' : (char === '　' ? '□' : char);
+                
+                const ruby = document.createElement('div');
+                ruby.className = 'slot-ruby';
+                ruby.innerText = this.getAttr(char);
+
+                slot.appendChild(charBox);
+                slot.appendChild(ruby);
+                this.dom.grid.appendChild(slot);
+            }
+
+            // UI状態の更新
+            this.dom.orgLen.innerText = `${orgLen} 文字`;
+            this.dom.editLen.innerText = `${editLen} / ${orgLen} 文字`;
+            this.dom.diffCnt.innerText = `変更: ${diffs}`;
+
+            if (orgLen === editLen) {
+                this.dom.resultCard.className = 'card status-ok';
+                this.dom.status.innerText = "● 桁数一致（安全）";
+                this.dom.status.style.color = "var(--bs-green)";
+                this.dom.copyBtn.disabled = false;
+            } else {
+                this.dom.resultCard.className = 'card status-error';
+                this.dom.status.innerText = "× 桁数不一致（コピー禁止）";
+                this.dom.status.style.color = "var(--bs-red)";
+                this.dom.copyBtn.disabled = true;
+            }
+        },
+
+        copy() {
+            navigator.clipboard.writeText(this.dom.edit.value).then(() => {
+                this.toast("クリップボードにコピーしました");
+            });
+        },
+
+        async screenshot() {
+            const area = document.getElementById('capture-area');
+            const canvas = await html2canvas(area);
+            canvas.toBlob(blob => {
+                const item = new ClipboardItem({ "image/png": blob });
+                navigator.clipboard.write([item]).then(() => {
+                    this.toast("証跡画像をコピーしました（ペイント等に貼り付け可能）");
+                });
+            });
+        },
+
+        reset() {
+            if (confirm("作業内容をリセットします。よろしいですか？")) {
+                location.reload();
+            }
+        },
+
+        toast(msg) {
+            const t = document.getElementById('toast-msg');
+            t.innerText = msg;
+            t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+    };
+
+    app.init();
+</script>
+
+</body>
+</html>

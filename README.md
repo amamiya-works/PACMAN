@@ -9,7 +9,8 @@
 [![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-Deployed-222222?style=for-the-badge&logo=github)](https://pages.github.com/)
 
 **Live Demo (v13 - ロックあり):** https://amamiya-works.github.io/PACMAN/pacman-v13.html  
-**Live Demo (v13-Lite - 制限なし):** https://amamiya-works.github.io/PACMAN/pacman-v13-lite.html
+**Live Demo (v13-Lite - 制限なし):** https://amamiya-works.github.io/PACMAN/pacman-v13-lite.html  
+**Live Demo (v13-Offline - オフライン対応):** https://amamiya-works.github.io/PACMAN/pacman-v13-offline.html
 
 ---
 
@@ -37,6 +38,7 @@
 | :--- | :--- | :--- |
 | `pacman-v13.html` | 推奨画面サイズ未満でロック | 本番業務・正式運用向け |
 | `pacman-v13-lite.html` | 警告バナー表示のみ・制限なし | デモ確認・小画面での検証向け |
+| `pacman-v13-offline.html` | ロックあり・外部CDN不要 | インターネット非接続環境での運用向け |
 
 ---
 
@@ -91,6 +93,7 @@ WCAG（Webアクセシビリティ標準）の推奨タッチターゲット20px
 
 ```
 PACMAN/
-├── pacman-v13.html      # ロックあり・本番運用版
-└── pacman-v13-lite.html # 警告のみ・制限なし版
+├── pacman-v13.html         # ロックあり・本番運用版
+├── pacman-v13-lite.html    # 警告のみ・制限なし版
+└── pacman-v13-offline.html # ロックあり・html2canvasインライン埋め込み・オフライン対応版
 ```

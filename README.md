@@ -1,4 +1,5 @@
 # PACMAN
+
 # Parameter Safeguard
 
 パラメータ変更作業の入力ミスをゼロにするための、業務用ブラウザツール。  
@@ -34,11 +35,11 @@
 
 ## バージョン構成
 
-| バージョン | 特徴 | 用途 |
-| :--- | :--- | :--- |
-| `pacman-v13.html` | 推奨画面サイズ未満でロック | 本番業務・正式運用向け |
-| `pacman-v13-lite.html` | 警告バナー表示のみ・制限なし | デモ確認・小画面での検証向け |
-| `pacman-v13-offline.html` | ロックあり・外部CDN不要 | インターネット非接続環境での運用向け |
+| バージョン                | 特徴                         | 用途                                 |
+| :------------------------ | :--------------------------- | :----------------------------------- |
+| `pacman-v13.html`         | 推奨画面サイズ未満でロック   | 本番業務・正式運用向け               |
+| `pacman-v13-lite.html`    | 警告バナー表示のみ・制限なし | デモ確認・小画面での検証向け         |
+| `pacman-v13-offline.html` | ロックあり・外部CDN不要      | インターネット非接続環境での運用向け |
 
 ---
 
@@ -78,10 +79,10 @@ WCAG（Webアクセシビリティ標準）の推奨タッチターゲット20px
 
 設計・開発フェーズで LLM（主に Claude）を以下の用途で使用した。
 
-| 用途 | 具体的な内容 |
-| :--- | :--- |
-| 設計レビュー | 文字ボックスのサイズ設計・画面サイズ制約の根拠整理 |
-| 実装調査 | クリップボードへの画像保存APIの実装パターン確認 |
+| 用途           | 具体的な内容                                         |
+| :------------- | :--------------------------------------------------- |
+| 設計レビュー   | 文字ボックスのサイズ設計・画面サイズ制約の根拠整理   |
+| 実装調査       | クリップボードへの画像保存APIの実装パターン確認      |
 | コードレビュー | 全角検知ロジックの精度向上と誤検知パターンの洗い出し |
 
 コードの自動生成には留まらず、意思決定の高速化と見落としの防止が主な活用目的。  
@@ -97,3 +98,34 @@ PACMAN/
 ├── pacman-v13-lite.html    # 警告のみ・制限なし版
 └── pacman-v13-offline.html # ロックあり・html2canvasインライン埋め込み・オフライン対応版
 ```
+
+---
+
+# PACMAN — Parameter Safeguard
+
+A browser-based tool that eliminates input errors in parameter change operations.  
+A single mistyped character can trigger a critical incident. PACMAN was built to prevent that.
+
+[![HTML](https://img.shields.io/badge/HTML-Single_File-E34F26?style=for-the-badge&logo=html5)](https://developer.mozilla.org/en-US/docs/Web/HTML)
+[![JavaScript](https://img.shields.io/badge/JavaScript-Vanilla-F7DF1E?style=for-the-badge&logo=javascript)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
+[![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-Deployed-222222?style=for-the-badge&logo=github)](https://pages.github.com/)
+
+**Live Demo (v13 - with lock):** https://amamiya-works.github.io/PACMAN/pacman-v13.html  
+**Live Demo (v13-Lite - no restrictions):** https://amamiya-works.github.io/PACMAN/pacman-v13-lite.html  
+**Live Demo (v13-Offline - no CDN required):** https://amamiya-works.github.io/PACMAN/pacman-v13-offline.html
+
+---
+
+## Overview
+
+Renders each character in a numbered box for precise visual verification, physically blocks full-width input before it reaches the next process, and exports an audit trail image to the clipboard.
+
+No installation required. Runs as a single HTML file in any environment.
+
+---
+
+## Key Design Decisions
+
+- **No scrolling by design.** Requires 1280×600px+ display. Information outside the viewport increases cognitive load and introduces oversight risk.
+- **30px minimum character box size.** WCAG 20px touch target recommendation × 1.5 safety factor. Standards-referenced, not arbitrary.
+- **Single-file architecture.** Zero setup. Any machine with a browser can run it immediately.
